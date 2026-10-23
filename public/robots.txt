@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://dralidianalongo.com.br/sitemap.xml
