@@ -1,3 +1,8 @@
 {
-  "trailingSlash": true
+  "trailingSlash": true,
+  "redirects": [
+    { "source": "/index.php", "destination": "/", "permanent": true },
+    { "source": "/wp-sitemap.xml", "destination": "/sitemap.xml", "permanent": true },
+    { "source": "/favicon.ico", "destination": "/wp-content/uploads/2025/08/cropped-Untitled-design-17-32x32.png", "permanent": false }
+  ]
 }

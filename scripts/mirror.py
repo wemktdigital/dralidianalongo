@@ -39,8 +39,14 @@ OLD_SERVER = re.compile(
     r"background-image\s*:\s*url\(\s*[\"']?https?://srv\d+\.wemarketingdigital\.com\.br[^)\"']*[\"']?\s*\)\s*;?",
     re.I,
 )
+ROOT_FILES = ("/googlea135b5eb62be9c33.html",)
 CTX = ssl.create_default_context()
 TITLE_SUFFIXES: list[str] = []
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args, **kwargs):
+        return None
 HOSTS: set[str] = set()
 
 
@@ -172,6 +178,22 @@ def extract_urls(text: str, base: str) -> set[str]:
         text,
     ):
         found.add(urllib.parse.urljoin(base, match.replace("\\/", "/")))
+    for match in re.findall(r'"concatemoji"\s*:\s*"([^"]+)"', text):
+        found.add(urllib.parse.urljoin(base, match.replace("\\/", "/")))
+    for match in re.findall(
+        r"""<meta\b[^>]*name=["']msapplication-TileImage["'][^>]*content=["']([^"']+)["']""",
+        text,
+        flags=re.I,
+    ):
+        found.add(urllib.parse.urljoin(base, match))
+    return found
+
+
+def elementor_dynamic_assets(text: str, base: str) -> set[str]:
+    """Arquivos que o Elementor só pede no clique (lightbox, swiper, compartilhar)."""
+    found = set()
+    for path, ext in re.findall(r"\$\{r\}((?:lib|css)/[A-Za-z0-9/_-]+)\$\{i\}\.(js|css)", text):
+        found.add(f"{base}/assets/{path}.min.{ext}")
     return found
 
 
@@ -258,34 +280,6 @@ def rewrite_html(html: str) -> str:
         flags=re.I,
     )
     html = OLD_SERVER.sub("", html)
-    html = re.sub(
-        r'<script\b[^>]*\bsrc="https://cdn\.trustindex\.io/loader\.js[^"]*"[^>]*>\s*</script>',
-        "",
-        html,
-    )
-    html = re.sub(
-        r'<div\b[^>]*\bdata-src="https://cdn\.trustindex\.io/loader\.js\?wp-widget"[^>]*>\s*</div>',
-        "",
-        html,
-    )
-    html = re.sub(
-        r'<pre class="ti-widget">([\s\S]*?)</pre>\s*<pre class="ti-hidden-markup"[^>]*>[\s\S]*?</pre>',
-        r'<div class="ti-widget-slot">\1</div>',
-        html,
-        count=1,
-    )
-    html = re.sub(
-        r'\sstyle="opacity:\s*0;\s*height:\s*0\s*!important;\s*overflow:\s*hidden\s*!important"',
-        "",
-        html,
-    )
-    html = re.sub(
-        r'<script id="wp-emoji-settings"[\s\S]*?</script>\s*'
-        r'<script type="module">[\s\S]*?wp-emoji-loader\.min\.js\s*</script>',
-        "",
-        html,
-        count=1,
-    )
     html = fix_star_alts(html)
     if "ti-widget" in html and not re.search(r"<link\b[^>]*trustindex-google-widget\.css", html):
         html = html.replace("</head>", TRUSTINDEX_CSS + "\n</head>", 1)
@@ -480,10 +474,11 @@ def main() -> None:
                 flags.append(f"removida marcacao de servidor antigo: {clean}")
                 data = cleaned.encode("utf-8")
                 text = cleaned
-            if "__elementorLoadChunk" in text and "/assets/js/" in clean:
+            if "/assets/js/" in clean:
                 base = clean.split("/assets/js/")[0]
                 for name in re.findall(r"__elementorLoadChunk\(`([A-Za-z0-9_-]+)`\)", text):
                     queue.append(base + "/assets/js/chunks/" + name + ".min.js")
+                queue.extend(elementor_dynamic_assets(text, base))
             for extra in extract_urls(text, clean):
                 if same_origin(extra) and not should_skip(extra):
                     queue.append(extra)
@@ -509,6 +504,39 @@ def main() -> None:
     (PUBLIC / "sitemap.xml").write_text(sitemap, encoding="utf-8")
     (PUBLIC / "robots.txt").write_text(
         f"User-agent: *\nAllow: /\n\nSitemap: {ORIGIN}/sitemap.xml\n",
+        encoding="utf-8",
+    )
+    for name in ROOT_FILES:
+        try:
+            data, _final, _ctype = fetch(ORIGIN + name)
+        except Exception as error:
+            flags.append(f"falha arquivo da raiz {name}: {error}")
+            continue
+        (PUBLIC / name.lstrip("/")).write_bytes(data)
+    favicon = ""
+    try:
+        req = urllib.request.Request(ORIGIN + "/favicon.ico", headers={"User-Agent": BROWSER_UA})
+        opener = urllib.request.build_opener(NoRedirect, urllib.request.HTTPSHandler(context=CTX))
+        opener.open(req, timeout=60)
+    except urllib.error.HTTPError as error:
+        if error.code in (301, 302) and error.headers.get("Location"):
+            favicon = urllib.parse.urlparse(error.headers["Location"]).path
+    except Exception as error:
+        flags.append(f"falha favicon: {error}")
+    if favicon and not local_path(ORIGIN + favicon).exists():
+        flags.append(f"favicon aponta para arquivo que nao foi copiado: {favicon}")
+    redirects = [
+        "RedirectMatch 301 ^/index\\.php$ /",
+        "RedirectMatch 301 ^/wp-sitemap\\.xml$ /sitemap.xml",
+    ]
+    if favicon:
+        redirects.append(f"RedirectMatch 302 ^/favicon\\.ico$ {favicon}")
+    (PUBLIC / ".htaccess").write_text(
+        "Options -Indexes\n"
+        "DirectoryIndex index.html\n"
+        "ErrorDocument 404 /404.html\n\n"
+        + "\n".join(redirects)
+        + "\n",
         encoding="utf-8",
     )
     try:

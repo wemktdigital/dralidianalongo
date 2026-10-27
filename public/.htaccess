@@ -1,0 +1,7 @@
+Options -Indexes
+DirectoryIndex index.html
+ErrorDocument 404 /404.html
+
+RedirectMatch 301 ^/index\.php$ /
+RedirectMatch 301 ^/wp-sitemap\.xml$ /sitemap.xml
+RedirectMatch 302 ^/favicon\.ico$ /wp-content/uploads/2025/08/cropped-Untitled-design-17-32x32.png
