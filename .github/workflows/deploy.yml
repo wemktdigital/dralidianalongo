@@ -1,0 +1,58 @@
+﻿name: Deploy Website (Vercel / cPanel FTP)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Build Project
+        run: npm run build
+        env:
+          PUBLIC_GTM_ID: ${{ vars.PUBLIC_GTM_ID || secrets.PUBLIC_GTM_ID }}
+
+      - name: Check FTP credentials
+        id: ftp_check
+        run: |
+          if [ -z "${{ secrets.FTP_SERVER }}" ]; then
+            echo "has_ftp=false" >> $GITHUB_OUTPUT
+            echo "Aviso: Credenciais de FTP (FTP_SERVER) nao configuradas."
+            echo "Pulando sincronizacao FTP. O site permanece rodando normalmente na Vercel."
+          else
+            echo "has_ftp=true" >> $GITHUB_OUTPUT
+            echo "Credenciais de FTP detectadas. Prosseguindo com deploy FTP..."
+          fi
+
+      - name: Deploy via FTP
+        if: steps.ftp_check.outputs.has_ftp == 'true'
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.FTP_SERVER }}
+          username: ${{ secrets.FTP_USERNAME }}
+          password: ${{ secrets.FTP_PASSWORD }}
+          local-dir: ./dist/
+          server-dir: ./public_html/
+          dangerous-clean-slate: false
